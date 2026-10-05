@@ -821,7 +821,68 @@ header{
     margin:0;
     font-size:23px;
 }
+.success-card{
+    background:#fff;
+    border-radius:24px;
+    padding:35px 22px;
+    text-align:center;
+    box-shadow:0 8px 30px rgba(0,0,0,.08);
+    max-width:500px;
+    margin:40px auto;
+}
+
+.success-icon{
+    width:75px;
+    height:75px;
+    margin:0 auto 18px;
+    border-radius:50%;
+    background:#39a844;
+    color:#fff;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-size:42px;
+    font-weight:800;
+}
+
+.success-card h2{
+    margin:0 0 10px;
+    font-size:25px;
+}
+
+.success-card p{
+    color:#777;
+    margin-bottom:25px;
+}
+
+.success-order,
+.success-amount{
+    display:flex;
+    justify-content:space-between;
+    padding:14px 0;
+    border-bottom:1px solid #eee;
+    font-size:14px;
+}
+
+.success-amount strong{
+    color:#e96b6b;
+    font-size:18px;
+}
+
+#successHomeBtn{
+    width:100%;
+    margin-top:25px;
+    border:none;
+    padding:15px;
+    border-radius:15px;
+    background:#e96b6b;
+    color:#fff;
+    font-size:16px;
+    font-weight:800;
+    cursor:pointer;
+}
 </style>
+<script src="https://sdk.cashfree.com/js/v3/cashfree.js"></script>
 </head>
 
 <body>
@@ -1051,6 +1112,30 @@ header{
         Pay ₹0
     </button>
 
+</section>
+</script>
+<section id="paymentSuccessPage" class="page hidden">
+    <div class="success-card">
+        <div class="success-icon">✓</div>
+
+        <h2>Payment Successful 🎉</h2>
+
+        <p>Your payment has been verified successfully.</p>
+
+        <div class="success-order">
+            <span>Order ID</span>
+            <strong id="successOrderId">-</strong>
+        </div>
+
+        <div class="success-amount">
+            <span>Paid Amount</span>
+            <strong id="successAmount">₹0</strong>
+        </div>
+
+        <button id="successHomeBtn">
+            Back to Home
+        </button>
+    </div>
 </section>
 <!-- FLOATING CART -->
 <button id="cartFloat" class="cart-float">
@@ -2150,26 +2235,157 @@ backToCart.addEventListener(
 
     }
 );
-checkoutPayBtn.addEventListener(
-    "click",
-    function(){
-
-        const amount = checkoutTotal.textContent;
-
-        alert(
-            "Payment Gateway will open here.\n\n" +
-            "Amount: " + amount
-        );
-
-    }
-);
-payBtn.addEventListener("click", function(){
-
-    openCheckout();
-
+const cashfree = Cashfree({
+    mode: "sandbox"
 });
 
-</script>
+checkoutPayBtn.addEventListener("click", async function(){
 
+    const amountText = checkoutTotal.textContent;
+    const amount = Number(amountText.replace("₹", ""));
+
+    if (!amount || amount <= 0) {
+        alert("Invalid payment amount.");
+        return;
+    }
+
+    checkoutPayBtn.disabled = true;
+    checkoutPayBtn.textContent = "Opening Payment...";
+
+    try {
+
+        const response = await fetch("http://localhost:5000/create-order", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                amount: amount
+            })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            console.error("Backend Error:", data);
+            alert("Unable to create payment order.");
+            checkoutPayBtn.disabled = false;
+            checkoutPayBtn.textContent = "Pay ₹" + amount;
+            return;
+        }
+
+        console.log("Cashfree Order:", data);
+
+        await cashfree.checkout({
+            paymentSessionId: data.paymentSessionId,
+            redirectTarget: "_self"
+        });
+
+    } catch (error) {
+
+        console.error("Payment Error:", error);
+
+        alert(
+            "Payment system connect nahi ho paya.\n\n" +
+            "Make sure backend server is running."
+        );
+
+        checkoutPayBtn.disabled = false;
+        checkoutPayBtn.textContent = "Pay ₹" + amount;
+    }
+});
+window.addEventListener("pageshow", function(){
+
+    checkoutPayBtn.disabled = false;
+
+    if(checkoutTotal && checkoutTotal.textContent){
+        checkoutPayBtn.textContent =
+            "Pay " + checkoutTotal.textContent;
+    }
+
+});
+const paymentSuccessPage = document.getElementById("paymentSuccessPage");
+const successOrderId = document.getElementById("successOrderId");
+const successAmount = document.getElementById("successAmount");
+const successHomeBtn = document.getElementById("successHomeBtn");
+
+async function checkPaymentAfterRedirect(){
+
+    const params = new URLSearchParams(window.location.search);
+    const orderId = params.get("order_id");
+
+    if(!orderId){
+        return;
+    }
+
+    homePage.classList.add("hidden");
+    categoryPage.classList.add("hidden");
+    cartPage.classList.add("hidden");
+    checkoutPage.classList.add("hidden");
+    paymentSuccessPage.classList.remove("hidden");
+
+    successOrderId.textContent = orderId;
+    successAmount.textContent = "Verifying...";
+
+    try{
+
+        const response = await fetch(
+            "http://localhost:5000/payment-status/" +
+            encodeURIComponent(orderId)
+        );
+
+        const data = await response.json();
+
+        if(data.success && data.status === "SUCCESS"){
+
+            successAmount.textContent =
+                totalElement.textContent;
+
+            cart = [];
+            discountAmount = 0;
+            updateCartCount();
+
+        }else{
+
+            paymentSuccessPage.innerHTML = `
+                <div class="success-card">
+                    <div class="success-icon"
+                         style="background:#e96b6b;">!</div>
+
+                    <h2>Payment Not Completed</h2>
+
+                    <p>
+                        Cashfree has not confirmed this payment yet.
+                    </p>
+
+                    <button id="retryHomeBtn">
+                        Back to Home
+                    </button>
+                </div>
+            `;
+
+            document
+                .getElementById("retryHomeBtn")
+                .addEventListener("click", function(){
+                    window.location.href =
+                        window.location.pathname;
+                });
+        }
+
+    }catch(error){
+
+        console.error("Verification Error:", error);
+
+        successAmount.textContent = "Verification failed";
+    }
+}
+
+successHomeBtn.addEventListener("click", function(){
+    window.location.href = window.location.pathname;
+});
+
+checkPaymentAfterRedirect();
+
+</script>
 </body>
 </html>
